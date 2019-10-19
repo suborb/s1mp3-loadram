@@ -1,0 +1,36 @@
+# Project: loadram-v0.2.1-ALL
+# Makefile created by Dev-C++ 4.9.9.2
+
+CPP  = g++.exe
+CC   = gcc.exe
+WINDRES = windres.exe
+RES  = loadram-v0.2.1-ALL_private.res
+OBJ  = ../src/device.o ../src/loadram.o $(RES)
+LINKOBJ  = ../src/device.o ../src/loadram.o $(RES)
+LIBS =  -L"C:/Dev-Cpp/lib" -L"C:/loadram/loadram-win32-C-v0.1/lib" -L"C:/loadram/loadram-win32-C-v0.1" ../lib/gcc/libusb.a  
+INCS =  -I"C:/Dev-Cpp/include"  -I"C:/loadram/loadram-win32-C-v0.1" 
+CXXINCS =  -I"C:/Dev-Cpp/lib/gcc/mingw32/3.4.2/include"  -I"C:/Dev-Cpp/include/c++/3.4.2/backward"  -I"C:/Dev-Cpp/include/c++/3.4.2/mingw32"  -I"C:/Dev-Cpp/include/c++/3.4.2"  -I"C:/Dev-Cpp/include"  -I"C:/loadram/loadram-win32-C-v0.1" 
+BIN  = ../bin/loadram-v0.2.1-ALL.exe
+CXXFLAGS = $(CXXINCS)  
+CFLAGS = $(INCS)  
+RM = rm -f
+
+.PHONY: all all-before all-after clean clean-custom
+
+all: all-before ../bin/loadram-v0.2.1-ALL.exe all-after
+
+
+clean: clean-custom
+	${RM} $(OBJ) $(BIN)
+
+$(BIN): $(OBJ)
+	$(CC) $(LINKOBJ) -o "..\bin\loadram-v0.2.1-ALL.exe" $(LIBS)
+
+../src/device.o: ../src/device.c
+	$(CC) -c ../src/device.c -o ../src/device.o $(CFLAGS)
+
+../src/loadram.o: ../src/loadram.c
+	$(CC) -c ../src/loadram.c -o ../src/loadram.o $(CFLAGS)
+
+loadram-v0.2.1-ALL_private.res: loadram-v0.2.1-ALL_private.rc 
+	$(WINDRES) -i loadram-v0.2.1-ALL_private.rc --input-format=rc -o loadram-v0.2.1-ALL_private.res -O coff 

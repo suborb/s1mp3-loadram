@@ -1,0 +1,223 @@
+//loadram.c: main source code, uploads binary file to ZRAM
+//Copyright 2006 Jeroen Domburg <s1fwx@jeroen.ietsmet.nl>
+//This software is licensed under the GNU GPL.
+
+#include "loadram.h"
+#include "debug.h"
+
+//Small debugging routine to display the contents of a buffer
+static void printbuff(char* buff, int len) {
+    int x;
+    for (x=0; x<len; x++) {
+	dprintf(3,"%02hhx ",buff[x]);
+	if ((x&15)==15) dprintf(3,"\n");
+    }
+    dprintf(3,"\n");
+}
+
+//The following code contains quite a few 'magic numbers'. These are gleaned
+//from usb logs from a firmware update by the original Windows-programs.
+//I'm not sure if all the magic really is necessary, but let's keep it until
+//we're sure.
+
+
+//Doesn't work yet. The big idea is to find out if we're in firmware or ADFU 
+//mode completely automatically
+int inadfumode(struct usb_dev_handle *h) {
+    CMD c;
+    size_t n;
+    char data[1024];
+    memset(&c,0,sizeof(CMD));
+    dprintf(1,"Inquire device type...\n");
+    //Inquire device type
+    c.mode = 0x80;
+    c.cmd = 0x08008905;
+    c.size = 0xc0; 
+    c.unkwn0x13=(8<<16)+0xcb03; 
+    c.unkwn0x17=(uint32)(0x4100+(c.size>>8));;
+    device_send_cmd(h, &c, (void *)data, c.size);    
+    printbuff(data,c.size);
+    for (n=0; n<c.size; n++) {
+	if (data[n]>31) dprintf(3,"%c",data[n]);
+    }
+    dprintf(3,"\n");
+    return(0);
+}
+
+int uploadtoram(struct usb_dev_handle *h, char* buff, unsigned int address, unsigned int nobytes) {
+    //Upload program to RAM
+    CMD c;
+    memset(&c,0,sizeof(CMD));
+    c.mode = 0x0;
+    c.cmd = 0x3005+((long)address<<16);
+    c.size = (uint32)nobytes; 
+    c.unkwn0x13=(8<<16)+0xcb03; //page 0
+    c.unkwn0x17=(uint32)(0x4100+(nobytes>>8));
+    return device_send_cmd(h, &c, (void *) buff, (uint32)nobytes);
+}
+
+//Makes the player run a block of code from a certain address.
+int runcode(struct usb_dev_handle *h, unsigned int addr, int adfumode) {
+    CMD c;
+    memset(&c,0,sizeof(CMD));
+    if (!adfumode) {
+	c.mode = 0xf8;
+	c.cmd = 0xa0000020+(addr<<8);
+	c.size = 0;
+	c.unkwn0x13=0x80000;
+	c.unkwn0x17=0xe57000;
+	return device_send_cmd(h, &c, NULL, 0);
+    } else {
+	c.mode = 0xf8;
+	c.cmd = 0x9f000010+(addr<<8);
+	c.size = 0;
+	c.unkwn0x13=0x0240000;
+	c.unkwn0x17=0xe57000;
+	return device_send_cmd(h, &c, NULL, 0);
+    }
+}
+
+//Load a file and return the buffer containing it. The buffer will be
+//padded to a multiple of pad bytes.
+char* loadfile(char *filename, unsigned int* size, unsigned int pad) {
+    size_t r;
+    FILE *f;
+    char* buff;
+    unsigned int nobytes;
+    struct stat fstat;
+    
+//Get file size
+    r=stat(filename,&fstat);
+    if (r!=0) {
+	perror("Statting input file");
+	return(0);
+    }
+    
+    if (fstat.st_size>65535) {
+	printf("Files >64K don't fit in the z80 address space, silly.\n");
+	return(0);
+    }
+    nobytes=fstat.st_size;
+    
+//Pad to a multiple of pad bytes.
+    nobytes+=(pad-1); nobytes=((int)(nobytes/pad))*pad; 
+    dprintf(2,"%li bytes; padded to %i (0x%x).\n",fstat.st_size,nobytes,nobytes);
+
+//Alloc buffer & read
+    buff=(char*)malloc(nobytes);
+    if (buff==NULL) {
+	perror("Malloc failed");
+	return(0);
+    }
+    
+    f=fopen(filename, "rb");
+    if (!f) {
+	perror("Reading input file");
+	return(0);
+    }
+    r=fread(buff,1,fstat.st_size,f);
+    if ((int)r<fstat.st_size) {
+	perror("Short read at input file");
+	return(0);
+    }
+    dprintf(2,"%i bytes read.\n",nobytes);
+    fclose(f);
+    *size=nobytes;
+    return(buff);
+}
+
+
+void printhelp() {
+    printf("Usage: \nloadram file.bin [options]\nor\n");
+    printf("loadram 2ndloader.bin file.bin [options]\n");
+    printf("with valid options:\n");
+    printf("-h: display this help blurb\n");
+    printf("-u: use adfu mode instead of firmware update mode\n");
+    printf("-d n: set debugging verbosity to n\n");
+    exit(0);
+}
+
+int main(int argc, char** argv) {
+    static struct usb_dev_handle *h;
+    int r=0;
+    int n;
+    char *membuff=NULL;
+    char *files[2];
+    int useadfu=0;
+    int nofiles=0;
+    size_t nobytes=0;
+    unsigned int toaddr;
+
+//0x3400 is an ECC checking scratchpad, so we should be able to safely use it
+    toaddr=0x3400;
+
+    if (argc==1) printhelp();
+
+    debug_verbosity=1;
+    for (n=1; n<argc; n++) {
+	if (strcmp(argv[n],"-u")==0) {
+	    useadfu=1;
+	} else if (strcmp(argv[n],"-h")==0) {
+	    printhelp();
+	} else if (strcmp(argv[n],"-d")==0) {
+	    if (n==argc-1) printhelp();
+	    n++;
+	    debug_verbosity=atoi(argv[n]);
+	} else {
+	    if (nofiles==2) printhelp();
+	    files[nofiles++]=argv[n];
+	}
+    }
+
+    if (nofiles==0) printhelp();
+
+    if (nofiles==2) {
+	//2nd stage loader gets loaded higher, to allow for bigger program
+	//uploads without overwriting the loader.
+	toaddr=0x3800;
+    }
+
+
+    //Open libusb handle to device
+    h = device_open('a');
+    if (h==NULL) {
+#ifdef LINUX
+	printf("\nNo device detected.\n");
+#else
+	printf("\nCan't find any libusb Device, or there were errors either claiming or configuring the interface....Quitting\n");
+#endif
+	exit(1);
+    }
+
+//load file...
+    membuff=loadfile(files[0], &nobytes, 0x100);
+//upload...
+    uploadtoram(h,membuff,toaddr,nobytes);
+//and run.
+    dprintf(1,"Running the program...\n");
+    runcode(h, toaddr,useadfu);
+
+    if (nofiles==1) {
+	//The uploaded bin already was what's needed. Exit.
+	dprintf(1,"Done.\n");
+	exit(0);
+    }
+    
+    dprintf(1,"Loading data to send to second stage loader...\n");
+//Alloc buffer & read
+    free(membuff);
+    membuff=loadfile(files[1], &nobytes, 0x3800);    //don't change 3rd arg, the 2nd 
+		    //stage loader triggers on having received 0x3800 bytes.
+
+    dprintf(1,"Uploading second binary...\n");
+    r=usb_bulk_write(h, 0x1, (char*)membuff, nobytes, 10000);
+    
+    if (r<0) {
+	perror("Error sending");
+    } else {
+	dprintf(2,"Sent %i bytes.\n",r);
+    }
+    dprintf(1,"Done\n");
+    device_close(h);
+    return(0);
+}

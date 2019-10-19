@@ -1,0 +1,13 @@
+
+Under windows:
+
+1. get gcc/mingw or install Dev-C++
+2. run compile-gcc.bat
+3. if you have not before, install the driver located into win32-bin/driver
+4. run the program win32-bin/loadram.exe from the command line shell
+
+
+Under *nix:
+
+1. assert libusb to be installed. You need the development libraries too (libusb-dev)
+2. make

@@ -1,0 +1,9 @@
+These are a few examples. The bin-files can be uploaded by loadram and
+the result should be a 'hello world :)' on your screen if everything works.
+The 'small' variant can be uploaded directly (loadram disptxt-small.bin) while
+the large one uses the 2nd stage loader (loadram 2ndstage.bin fisptxt-large.bin)
+
+This dir contains the source of the examples; binaries can be found in 
+../examples-bin. That dir contains one more file: RECORD.AP, which basically
+is the binary resulting from compilation of the animation example included
+in the s1sdk. It can be loaded using the secondary loader.

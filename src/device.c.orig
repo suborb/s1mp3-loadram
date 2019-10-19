@@ -1,0 +1,142 @@
+//device.c: usb functions using libusb
+//Copyright 2006 Jeroen Domburg <s1fwx@jeroen.ietsmet.nl>
+//This software is licensed under the GNU GPL.
+
+#define	VENDOR_ID	4310
+#define	PRODUCT_ID	65361
+
+#include "device.h"
+#include "debug.h"
+
+USB_HANDLE device_open() {
+    struct usb_bus *busses;
+    struct usb_bus *bus;
+    USB_HANDLE device_handle;
+    int r;
+	r=0;
+    device_handle = NULL;
+    
+    usb_init();
+    usb_find_busses();
+    usb_find_devices();
+    
+
+    busses = usb_get_busses();
+    for (bus = busses; bus; bus = bus->next) {
+    	struct usb_device *dev;
+    	for (dev = bus->devices; dev; dev = dev->next) {
+	    if ((dev->descriptor.idVendor==VENDOR_ID)
+			&&(dev->descriptor.idProduct==PRODUCT_ID)
+			&& (!device_handle)) {
+	        dprintf(1,"device_open(): device found\n");
+	        device_handle = usb_open(dev);
+//ricardol:The error control logic is not tested
+//ricardol:The only two cases tested are when there is not libusb devices present
+//ricardol:and when there is one. 
+			if (device_handle==NULL) {
+				perror("device_open(): could not open the device\n");
+				return(NULL);
+        	}
+
+//ricardol:i put this just in case, but it returns an error, 
+#ifdef WIN32
+//JeroenD: Linux works OK without this, but fscks up the write with this. Weird.
+//L: there was an uninitialized variable (r) usage, I had to re-enable the proper code
+
+//ricardol: Looks like this has to be done under windows 
+//ricardol: if interface claiming is needed
+		r=usb_set_configuration(device_handle, 1);
+		if (r<0) perror("device_open(): could not usb_set_configuration(..)\n");
+#endif
+		r=usb_claim_interface(device_handle, 0);
+		r+=usb_set_altinterface(device_handle, 0);
+		if (r!=0) {
+			perror("device_open(): claim or configuration error\n");
+			usb_close(device_handle);
+			device_handle = NULL;
+		}
+		}	 			         
+	}
+    }
+    return device_handle;
+}
+
+
+// -----------------------------------------------------------------------------------------------
+bool device_close(USB_HANDLE hd)
+{
+    return usb_close(hd);
+}
+
+
+// -----------------------------------------------------------------------------------------------
+long device_send(USB_HANDLE hd, void *data, uint32 max_data)
+{
+    return usb_bulk_write(hd, 1, (char *)data, max_data, 1024);
+}
+
+
+static void printbuff(char* buff, int len) {
+    int x;
+    for (x=0; x<len; x++) {
+	dprintf(3,"%02hhx ",buff[x]);
+	if ((x&15)==15) dprintf(3,"\n");
+    }
+    dprintf(3,"\n");
+}
+
+// -----------------------------------------------------------------------------------------------
+long device_send_cmd(USB_HANDLE device_handle, LP_CMD cmd, void *data, uint32 max_data)
+{
+    uint8 tx_buf[CMD_BUFSIZE];
+    uint32 size;
+    int r;
+
+	size = 0;
+    dprintf(2,"Send cmd 0x%x\n", cmd->cmd);
+    //refill cmd
+    cmd->size=max_data;
+    cmd->undef0x04=0xEFBEADDE; //0xDEADBEEF as tag, gets noticed in USB dumps :)
+    //Standard CBW header
+    cmd->id[0]='U';cmd->id[1]='S';
+    cmd->id[2]='B';cmd->id[3]='C';
+  
+    //Write the data
+    dprintf(2,"Write cmd, 0x1f bytes.\n");
+    printbuff((char*)cmd,0x1f);
+    r=usb_bulk_write(device_handle, 1, (char*)cmd, 0x1f, 100);
+    if (r<0) {
+	perror("Error @ write cbw");
+	return(-1);
+    }
+    
+    if (max_data>0) {
+	if(cmd->mode == 0x80) {   // read data...
+    	    dprintf(2,"Read data, 0x%x bytes\n",max_data);
+    	    r=usb_bulk_read(device_handle, 0x82, (char*)data, max_data, 1000);
+    	    if (r<0) {
+    		perror("Read data"); 
+		return(-1);
+    	    }
+    	    size=r;
+	} else {                  // send data...
+    	    dprintf(2,"Write data, 0x%x bytes\n",max_data);
+    	    r=usb_bulk_write(device_handle, 1, (char*)data,  max_data, 1000);
+    	    if (r<0) {
+    		perror("Write data");
+		return(-1);
+    	    }
+	}
+	dprintf(2,"Done -- 0x%x bytes.\n",r);
+    }
+    //Read csw
+    dprintf(2,"Read csw\n");
+    r=usb_bulk_read(device_handle, 0x82, (char*)tx_buf, 0x0d, 100);
+    dprintf(2,"Got 0x%x bytes.\n",r);
+    dprintf(3,"csw=%s\n",tx_buf);
+    if (r<0) {
+	perror("Error at read csw");
+	return(-1);
+    }
+    return (long)size;
+}
